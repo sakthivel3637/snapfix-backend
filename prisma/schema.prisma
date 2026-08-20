@@ -1,0 +1,227 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  DEVELOPER
+  TESTER
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FeedbackStatus {
+  OPEN
+  IN_PROGRESS
+  FIXED
+  VERIFIED
+  CLOSED
+  REOPENED
+}
+
+model User {
+  id                  String                  @id @default(uuid())
+  email               String                  @unique
+  password            String
+  name                String
+  role                Role                    @default(TESTER)
+  isActive            Boolean                 @default(true)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  memberships         ProjectMember[]
+  feedbacksCreated    Feedback[]              @relation("FeedbackCreator")
+  comments            Comment[]
+  notifications       Notification[]
+  statusChanges       FeedbackStatusHistory[]
+  assignmentsReceived FeedbackAssignment[]    @relation("Assignee")
+  assignmentsGiven    FeedbackAssignment[]    @relation("AssignedBy")
+}
+
+model Project {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  key         String          @unique
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  members     ProjectMember[]
+  feedbacks   Feedback[]
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  role      String   @default("MEMBER") // E.g., TESTER, MEMBER
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model Screenshot {
+  id               String            @id @default(uuid())
+  originalPath     String
+  fixedPath        String? // For "After" proof mode
+  createdAt        DateTime          @default(now())
+  feedbacks        Feedback[]
+  videoScreenshots VideoScreenshot[]
+}
+
+model VoiceRecording {
+  id        String     @id @default(uuid())
+  filePath  String
+  duration  Float      @default(0)
+  visibleTo String[]   @default([])
+  createdAt DateTime   @default(now())
+  feedbacks Feedback[]
+}
+
+model Feedback {
+  id               String                  @id @default(uuid())
+  projectId        String
+  jiraIssueKey     String?
+  title            String
+  description      String?
+  expectedResult   String?
+  actualResult     String?
+  stepsToReproduce String?
+  priority         Priority                @default(MEDIUM)
+  status           FeedbackStatus          @default(OPEN)
+  url              String
+  pageTitle        String?
+  browser          String?
+  os               String?
+  viewportWidth    Int?
+  viewportHeight   Int?
+  devicePixelRatio Float?
+  pinX             Float?
+  pinY             Float?
+  elementTag       String?
+  elementId        String?
+  elementClasses   String?
+  cssSelector      String?
+  elementText      String?
+  screenshotId     String?
+  voiceRecordingId String?
+  videoRecordingId String?
+  creatorId        String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  project          Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator          User                    @relation("FeedbackCreator", fields: [creatorId], references: [id])
+  screenshot       Screenshot?             @relation(fields: [screenshotId], references: [id], onDelete: SetNull)
+  voiceRecording   VoiceRecording?         @relation(fields: [voiceRecordingId], references: [id], onDelete: SetNull)
+  videoRecording   VideoRecording?         @relation(fields: [videoRecordingId], references: [id], onDelete: SetNull)
+  comments         Comment[]
+  labels           FeedbackLabel[]
+  statusHistory    FeedbackStatusHistory[]
+  assignments      FeedbackAssignment[]
+  notifications    Notification[]
+}
+
+model Comment {
+  id         String    @id @default(uuid())
+  feedbackId String
+  userId     String
+  parentId   String?
+  text       String
+  createdAt  DateTime  @default(now())
+  feedback   Feedback  @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent     Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies    Comment[] @relation("CommentReplies")
+}
+
+model Label {
+  id        String          @id @default(uuid())
+  name      String          @unique
+  color     String          @default("#7c4dff")
+  createdAt DateTime        @default(now())
+  feedbacks FeedbackLabel[]
+}
+
+model FeedbackLabel {
+  id         String   @id @default(uuid())
+  feedbackId String
+  labelId    String
+  feedback   Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  label      Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([feedbackId, labelId])
+}
+
+model Notification {
+  id         String    @id @default(uuid())
+  userId     String
+  feedbackId String?
+  title      String
+  message    String
+  isRead     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedback   Feedback? @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+}
+
+model FeedbackStatusHistory {
+  id          String         @id @default(uuid())
+  feedbackId  String
+  status      FeedbackStatus
+  changedById String
+  createdAt   DateTime       @default(now())
+  feedback    Feedback       @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  changedBy   User           @relation(fields: [changedById], references: [id])
+}
+
+model FeedbackAssignment {
+  id           String   @id @default(uuid())
+  feedbackId   String
+  assigneeId   String
+  assignedById String
+  createdAt    DateTime @default(now())
+  feedback     Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  assignee     User     @relation("Assignee", fields: [assigneeId], references: [id])
+  assignedBy   User     @relation("AssignedBy", fields: [assignedById], references: [id])
+}
+
+model VideoRecording {
+  id               String            @id @default(uuid())
+  filePath         String
+  duration         Float             @default(0)
+  createdAt        DateTime          @default(now())
+  feedbacks        Feedback[]
+  videoScreenshots VideoScreenshot[]
+}
+
+model VideoScreenshot {
+  id               String         @id @default(uuid())
+  videoRecordingId String
+  screenshotId     String
+  timestamp        Float
+  title            String?
+  description      String?
+  createdAt        DateTime       @default(now())
+  videoRecording   VideoRecording @relation(fields: [videoRecordingId], references: [id], onDelete: Cascade)
+  screenshot       Screenshot     @relation(fields: [screenshotId], references: [id], onDelete: Cascade)
+}
+
+model UserFeedback {
+  id          String   @id @default(uuid())
+  name        String
+  title       String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
