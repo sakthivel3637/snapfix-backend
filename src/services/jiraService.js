@@ -1,20 +1,141 @@
 const fs = require('fs');
 const path = require('path');
+const prisma = require('../config/db');
 
-const JIRA_HOST = process.env.JIRA_HOST;
-const JIRA_EMAIL = process.env.JIRA_EMAIL;
-const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
-
-const isJiraEnabled = () => {
-  return !!(JIRA_HOST && JIRA_EMAIL && JIRA_API_TOKEN);
+// In-memory cache for Jira integration config
+let jiraCache = {
+  isEnabled: false,
+  host: '',
+  email: '',
+  apiToken: '',
+  updatedAt: null,
+  isInitialized: false,
 };
 
-const getAuthHeader = () => {
-  if (!isJiraEnabled()) return null;
-  const credentials = `${JIRA_EMAIL}:${JIRA_API_TOKEN}`;
-  const token = Buffer.from(credentials).toString('base64');
-  return `Basic ${token}`;
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+/**
+ * Synchronizes Jira credentials from DB into cache
+ */
+const syncJiraConfigFromDb = async () => {
+  try {
+    const dbConfig = await prisma.integration.findUnique({ where: { name: 'JIRA' } });
+    if (dbConfig && dbConfig.host && dbConfig.email && dbConfig.apiToken) {
+      jiraCache = {
+        isEnabled: Boolean(dbConfig.isEnabled),
+        host: dbConfig.host ? dbConfig.host.replace(/\/+$/, '') : '',
+        email: dbConfig.email || '',
+        apiToken: dbConfig.apiToken || '',
+        updatedAt: dbConfig.updatedAt,
+        isInitialized: true,
+      };
+      return jiraCache;
+    }
+  } catch (err) {
+    console.error('Error syncing Jira config from DB:', err.message);
+  }
+
+  jiraCache = {
+    isEnabled: false,
+    host: '',
+    email: '',
+    apiToken: '',
+    updatedAt: null,
+    isInitialized: true,
+  };
+  return jiraCache;
+};
+
+// Initial sync on module load
+syncJiraConfigFromDb();
+
+/**
+ * Updates cache immediately when saved/toggled via controller
+ */
+const updateJiraCache = (config) => {
+  jiraCache = {
+    ...jiraCache,
+    ...config,
+    host: config.host ? config.host.replace(/\/+$/, '') : (config.host === '' ? '' : jiraCache.host),
+    isEnabled: Boolean(config.isEnabled && (config.host ?? jiraCache.host) && (config.email ?? jiraCache.email) && (config.apiToken ?? jiraCache.apiToken)),
+  };
+};
+
+const isJiraEnabled = () => {
+  return Boolean(jiraCache.isEnabled && jiraCache.host && jiraCache.email && jiraCache.apiToken);
+};
+
+const getJiraHost = () => {
+  return jiraCache.host || '';
+};
+
+const getJiraEmail = () => {
+  return jiraCache.email || '';
+};
+
+const getAuthHeader = (emailOverride, tokenOverride) => {
+  const email = emailOverride || jiraCache.email;
+  const token = tokenOverride || jiraCache.apiToken;
+  if (!email || !token) return null;
+  const credentials = `${email}:${token}`;
+  const base64Token = Buffer.from(credentials).toString('base64');
+  return `Basic ${base64Token}`;
+};
+
+/**
+ * Tests connection to Jira with given or cached credentials
+ */
+const testJiraConnection = async (hostParam, emailParam, tokenParam) => {
+  const host = (hostParam || jiraCache.host || '').replace(/\/+$/, '');
+  const email = emailParam || jiraCache.email;
+  const token = tokenParam || jiraCache.apiToken;
+
+  if (!host || !email || !token) {
+    return {
+      success: false,
+      error: 'Host, Email, and API Token are all required.',
+    };
+  }
+
+  try {
+    const authHeader = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
+    const response = await fetch(`${host}/rest/api/3/myself`, {
+      method: 'GET',
+      headers: {
+        'Authorization': authHeader,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = `Jira API returned HTTP ${response.status}`;
+      if (response.status === 401) {
+        errorMsg = 'Authentication failed. Please verify your Jira Email and API Token.';
+      } else if (response.status === 404) {
+        errorMsg = 'Jira host URL not found. Please verify the domain (e.g. https://your-domain.atlassian.net).';
+      }
+      return {
+        success: false,
+        status: response.status,
+        error: errorMsg,
+        details: errorText,
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      displayName: data.displayName,
+      emailAddress: data.emailAddress,
+      accountId: data.accountId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: `Could not connect to Jira Host: ${error.message}`,
+    };
+  }
 };
 
 /**
@@ -22,8 +143,9 @@ const getAuthHeader = () => {
  * Required for project creation.
  */
 const getMyselfAccountId = async () => {
+  if (!isJiraEnabled()) return null;
   try {
-    const response = await fetch(`${JIRA_HOST}/rest/api/3/myself`, {
+    const response = await fetch(`${jiraCache.host}/rest/api/3/myself`, {
       method: 'GET',
       headers: {
         'Authorization': getAuthHeader(),
@@ -48,8 +170,9 @@ const getMyselfAccountId = async () => {
  * Verifies if a project exists in Jira.
  */
 const getProject = async (projectKey) => {
+  if (!isJiraEnabled()) return null;
   try {
-    const response = await fetch(`${JIRA_HOST}/rest/api/3/project/${projectKey}`, {
+    const response = await fetch(`${jiraCache.host}/rest/api/3/project/${projectKey}`, {
       method: 'GET',
       headers: {
         'Authorization': getAuthHeader(),
@@ -73,7 +196,7 @@ const getProject = async (projectKey) => {
 const createJiraProject = async (key, name, description) => {
   if (!isJiraEnabled()) {
     console.log('Jira integration is disabled or not fully configured.');
-    return { success: false, error: 'Jira integration not configured' };
+    return { success: false, error: 'Jira integration not configured or deactivated' };
   }
 
   try {
@@ -102,7 +225,7 @@ const createJiraProject = async (key, name, description) => {
 
     console.log(`Attempting to create Jira project: ${JSON.stringify(payload)}`);
 
-    const response = await fetch(`${JIRA_HOST}/rest/api/3/project`, {
+    const response = await fetch(`${jiraCache.host}/rest/api/3/project`, {
       method: 'POST',
       headers: {
         'Authorization': getAuthHeader(),
@@ -132,12 +255,11 @@ const createJiraProject = async (key, name, description) => {
  */
 const createJiraIssue = async (projectKey, summary, details) => {
   if (!isJiraEnabled()) {
-    console.log('Jira integration is disabled.');
+    console.log('Jira integration is deactivated or disabled.');
     return null;
   }
 
   try {
-    // Construct rich text description in Jira v2 syntax
     const descriptionLines = [
       `*Testing Tool Bug Report*`,
       ``,
@@ -177,7 +299,7 @@ const createJiraIssue = async (projectKey, summary, details) => {
       },
     };
 
-    const response = await fetch(`${JIRA_HOST}/rest/api/2/issue`, {
+    const response = await fetch(`${jiraCache.host}/rest/api/2/issue`, {
       method: 'POST',
       headers: {
         'Authorization': getAuthHeader(),
@@ -210,7 +332,6 @@ const uploadAttachment = async (issueKey, relativeFilePath) => {
 
   try {
     const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    // Remove leading slash and optional "/uploads" prefix to avoid double-nesting path resolution
     const cleanPath = relativeFilePath.replace(/^\/?uploads\//, '');
     const absolutePath = path.resolve(uploadDir, cleanPath);
 
@@ -224,7 +345,7 @@ const uploadAttachment = async (issueKey, relativeFilePath) => {
     const formData = new FormData();
     formData.append('file', fileBlob, path.basename(absolutePath));
 
-    const response = await fetch(`${JIRA_HOST}/rest/api/2/issue/${issueKey}/attachments`, {
+    const response = await fetch(`${jiraCache.host}/rest/api/2/issue/${issueKey}/attachments`, {
       method: 'POST',
       headers: {
         'Authorization': getAuthHeader(),
@@ -246,6 +367,11 @@ const uploadAttachment = async (issueKey, relativeFilePath) => {
 
 module.exports = {
   isJiraEnabled,
+  getJiraHost,
+  getJiraEmail,
+  syncJiraConfigFromDb,
+  updateJiraCache,
+  testJiraConnection,
   createJiraProject,
   createJiraIssue,
   uploadAttachment,

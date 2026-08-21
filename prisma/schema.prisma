@@ -225,3 +225,15 @@ model UserFeedback {
   updatedAt   DateTime @updatedAt
 }
 
+model Integration {
+  id        String   @id @default(uuid())
+  name      String   @unique // e.g. "JIRA"
+  host      String?
+  email     String?
+  apiToken  String?
+  isEnabled Boolean  @default(false)
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+

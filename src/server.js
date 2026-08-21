@@ -12,6 +12,7 @@ const feedbackRoutes = require('./routes/feedbackRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const userFeedbackRoutes = require('./routes/userFeedbackRoutes');
+const integrationRoutes = require('./routes/integrationRoutes');
 const { initSocket } = require('./sockets/socketManager');
 
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/user-feedbacks', userFeedbackRoutes);
+app.use('/api/integrations', integrationRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
@@ -75,9 +77,10 @@ const prisma = require('./config/db');
 const seedAdminUser = async () => {
   try {
     const adminEmail = 'admin@gmail.com';
+    const adminPassword = 'Admin@123';
     const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
     if (!existing) {
-      const hashedPassword = await bcrypt.hash('Admin@123', 10);
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
       await prisma.user.create({
         data: {
           email: adminEmail,
@@ -89,7 +92,16 @@ const seedAdminUser = async () => {
       });
       console.log('Successfully seeded default admin user (admin@gmail.com).');
     } else {
-      console.log('Default admin user already exists.');
+      // Ensure existing default admin has ADMIN role and isActive = true
+      if (existing.role !== 'ADMIN' || existing.isActive === false) {
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: { role: 'ADMIN', isActive: true },
+        });
+        console.log('Default admin user updated to ensure ADMIN role and active status.');
+      } else {
+        console.log('Default admin user already exists and is active.');
+      }
     }
 
     // Cleanup orphaned notifications where feedback has been deleted

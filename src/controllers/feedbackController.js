@@ -252,10 +252,11 @@ const getFeedbacks = async (req, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
+    const dynamicJiraHost = jiraService.getJiraHost();
     const enrichedFeedbacks = feedbacks.map((fb) => ({
       ...fb,
-      jiraIssueUrl: fb.jiraIssueKey && process.env.JIRA_HOST
-        ? `${process.env.JIRA_HOST}/browse/${fb.jiraIssueKey}`
+      jiraIssueUrl: fb.jiraIssueKey && dynamicJiraHost
+        ? `${dynamicJiraHost}/browse/${fb.jiraIssueKey}`
         : null,
     }));
 
@@ -342,8 +343,9 @@ const getFeedbackById = async (req, res) => {
       }
     }
 
-    const jiraIssueUrl = feedback.jiraIssueKey && process.env.JIRA_HOST
-      ? `${process.env.JIRA_HOST}/browse/${feedback.jiraIssueKey}`
+    const dynamicJiraHost = jiraService.getJiraHost();
+    const jiraIssueUrl = feedback.jiraIssueKey && dynamicJiraHost
+      ? `${dynamicJiraHost}/browse/${feedback.jiraIssueKey}`
       : null;
 
     res.json({ ...feedback, jiraIssueUrl });

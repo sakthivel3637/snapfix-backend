@@ -156,6 +156,26 @@ const updateProject = async (req, res) => {
 const deleteProject = async (req, res) => {
   try {
     const { id } = req.params;
+    const project = await prisma.project.findUnique({ where: { id } });
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Delete notifications associated with this project (e.g. project assignments or feedback notifications)
+    await prisma.notification.deleteMany({
+      where: {
+        OR: [
+          { message: { contains: `"${project.name}"` } },
+          { message: { contains: `project "${project.name}"` } },
+          {
+            feedback: {
+              projectId: id,
+            },
+          },
+        ],
+      },
+    });
+
     await prisma.project.delete({ where: { id } });
     res.json({ message: 'Project deleted successfully' });
   } catch (error) {
