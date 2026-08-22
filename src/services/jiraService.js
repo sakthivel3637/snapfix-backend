@@ -12,7 +12,7 @@ let jiraCache = {
   isInitialized: false,
 };
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const CLIENT_URL = process.env.CLIENT_URL || 'https://snapfix.techbucket.in';
 
 /**
  * Synchronizes Jira credentials from DB into cache
@@ -281,7 +281,7 @@ const createJiraIssue = async (projectKey, summary, details) => {
       details.stepsToReproduce || '_No steps provided._',
       ``,
       `----`,
-      `[View Original Bug in Testing Tool Dashboard|${CLIENT_URL}/feedback/${details.feedbackId}]`
+      `[View Original Bug in Testing Tool Dashboard|${CLIENT_URL}/#/feedback/${details.feedbackId}]`
     ];
 
     const description = descriptionLines.join('\n');
@@ -331,7 +331,9 @@ const uploadAttachment = async (issueKey, relativeFilePath) => {
   if (!isJiraEnabled() || !relativeFilePath) return;
 
   try {
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
+    const uploadDir = process.env.UPLOAD_DIR
+      ? path.resolve(process.env.UPLOAD_DIR)
+      : path.resolve(__dirname, '..', '..', 'uploads');
     const cleanPath = relativeFilePath.replace(/^\/?uploads\//, '');
     const absolutePath = path.resolve(uploadDir, cleanPath);
 

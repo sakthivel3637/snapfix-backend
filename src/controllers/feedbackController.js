@@ -421,7 +421,9 @@ const updateStatus = async (req, res) => {
       const path = require('path');
       const fixedPath = currentFeedback.screenshot.fixedPath;
       const filename = path.basename(fixedPath);
-      const UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
+      const UPLOAD_DIR = process.env.UPLOAD_DIR
+        ? path.resolve(process.env.UPLOAD_DIR)
+        : path.resolve(__dirname, '..', '..', 'uploads');
       const fullPath = path.join(UPLOAD_DIR, 'screenshots', filename);
 
       if (fs.existsSync(fullPath)) {
